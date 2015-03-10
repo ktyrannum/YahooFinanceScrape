@@ -1,0 +1,147 @@
+Imports System.Data.SqlClient
+Imports System.Configuration
+Imports System.Configuration.ConfigurationSettings
+Imports System.Xml
+Imports System.Net
+Imports System.IO
+Imports System.Text
+
+Module modMain
+    Sub Main()
+
+        Dim eventID As Integer
+        Dim errLogSrc As String
+        eventID = 5151
+        errLogSrc = "Moxy Automation (GetPrice)"
+
+        Dim strTicker As String
+        Dim strPrice As String
+        Dim sqlConn As New SqlClient.SqlConnection
+        sqlConn.ConnectionString = "Data Source=GJSVRW2K8SQL;Initial Catalog=sqlMoxyPrice;User ID=sa;Password=pur6ple"
+        Dim sqlCommand As SqlClient.SqlCommand = New SqlClient.SqlCommand()
+        sqlCommand.Connection = sqlConn
+        sqlCommand.CommandText = "INSERT INTO sqlMoxyPrice.dbo.tblTicker (TickSym, LastTradePrice, Timestamp) Values (@ticksym, @lasttradeprice, GETDATE())"
+
+
+        Console.WriteLine("[] Updating sqlMoxyPrices...")
+        Try
+            For Each line As String In File.ReadAllLines("C:\Utility\MoxyAutomation\MoxyPricesConsole.txt")
+                strTicker = line
+                If String.IsNullOrEmpty(strTicker) Then Continue For
+
+                Dim URLString As String = _
+                    "https://finance.yahoo.com/webservice/v1/symbols/" _
+                    & strTicker _
+                    & "/quote?format=xml"
+                Try
+                    Dim stockXML As New XmlDocument()
+                    stockXML.Load(URLString)
+
+                    Dim stockElemList As XmlNodeList = stockXML.GetElementsByTagName("field")
+                    Dim i As Integer
+
+                    For i = 0 To stockElemList.Count - 1
+                        If stockElemList(i).OuterXml.Contains("price") Then
+                            'Console.WriteLine(strTicker + " " + stockElemList(i).InnerText) / For debugging
+                            strPrice = stockElemList(i).InnerText
+                        End If
+                    Next
+
+                Catch ex As Exception
+                    Console.WriteLine("[!] Error: Cannot read quote from " + line)
+                End Try
+
+                If String.IsNullOrEmpty(strPrice) Then Continue For
+
+                sqlConn.Open()
+                sqlCommand.Parameters.Clear()
+                sqlCommand.Parameters.Add("@ticksym", SqlDbType.NVarChar).Value = strTicker
+                sqlCommand.Parameters.Add("@lasttradeprice", SqlDbType.Float).Value = strPrice
+                sqlCommand.ExecuteNonQuery()
+                Console.WriteLine(strTicker + ": " + strPrice + " [] Successfully Updated...")
+                sqlConn.Close()
+
+            Next
+            UpdateMoxy()
+
+        Catch ex As Exception
+            Console.Write("[!] Error " + ex.Message)
+            Call modEvent(errLogSrc, ex.Message.ToString())
+        End Try
+
+    End Sub
+    Private Sub UpdateMoxy()
+
+        Dim eventID As Integer
+        Dim errLogSrc As String
+        eventID = 5151
+        errLogSrc = "Moxy Automation (UpdateMoxy)"
+
+        Dim sqlConn2 As New SqlClient.SqlConnection
+        sqlConn2.ConnectionString = "Data Source=GJSVRW2K8SQL;Initial Catalog=Moxy85;User ID=sa;Password=pur6ple"
+        Dim sqlCommand2 As SqlClient.SqlCommand = New SqlClient.SqlCommand()
+        sqlCommand2.Connection = sqlConn2
+        sqlCommand2.CommandText = "UPDATE Moxy85.MxSec.Price " & _
+            "SET Price = c.LastTradePrice " & _
+            "FROM Moxy85.MxSec.Price a " & _
+            "JOIN Moxy85.MxSec.SecMaster b " & _
+            "ON a.SecKey = b.SecKey " & _
+            "JOIN sqlMoxyPrice.dbo.tblTicker c " & _
+            "ON b.Ticker = c.TickSym"
+
+        Try
+            Console.WriteLine("[] Updating Moxy...")
+            sqlConn2.Open()
+            sqlCommand2.ExecuteNonQuery()
+            sqlConn2.Close()
+            Console.WriteLine("[] Success...")
+            CleanDB()
+
+        Catch ex As Exception
+            Console.Write("[!] Error" + ex.Message)
+            Call modEvent(errLogSrc, ex.Message.ToString())
+        End Try
+
+    End Sub
+    Private Sub CleanDB()
+
+        Dim eventID As Integer
+        Dim errLogSrc As String
+        eventID = 5151
+        errLogSrc = "Moxy Automation (CleanDB)"
+
+        Dim sqlConn3 As New SqlClient.SqlConnection
+        sqlConn3.ConnectionString = "Data Source=GJSVRW2K8SQL;Initial Catalog=sqlMoxyPrice;User ID=sa;Password=pur6ple"
+        Dim sqlCommand3 As SqlClient.SqlCommand = New SqlClient.SqlCommand()
+        sqlCommand3.Connection = sqlConn3
+        sqlCommand3.CommandText = "DELETE FROM dbo.tblTicker"
+
+        Try
+            Console.WriteLine("[] Cleaning DB...")
+            sqlConn3.Open()
+            sqlCommand3.ExecuteNonQuery()
+            sqlConn3.Close()
+            Console.WriteLine("[] Success...")
+            Console.WriteLine("[] Moxy Prices Updated / Database Cleaned :)...")
+
+        Catch ex As Exception
+            Console.Write("[!] Error " + ex.Message)
+            Call modEvent(errLogSrc, ex.Message.ToString())
+        End Try
+
+    End Sub
+
+    Public Sub modEvent(ByVal strErrSource As String, ByVal strErrLog As String)
+
+        Dim eventID As Integer
+        eventID = 5151
+
+        If Not EventLog.SourceExists(strErrSource) Then
+            EventLog.CreateEventSource(strErrSource, "Application")
+            Console.WriteLine("Creating event source")
+        End If
+
+        EventLog.WriteEntry(strErrSource, strErrLog, EventLogEntryType.Error, eventID)
+
+    End Sub
+End Module
